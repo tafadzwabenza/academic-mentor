@@ -3,6 +3,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
+from dotenv import load_dotenv
+from google import genai
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 import database_manager as dbm
@@ -15,6 +17,9 @@ from notebook_agent import process_file_upload
 from socratic_agent import socratic_refiner
 from visualizer_agent import conceptual_visualizer
 from writing_agent import writing_scaffolder
+
+load_dotenv()
+title_client = genai.Client()
 
 dbm.init_platform_db()
 
@@ -342,11 +347,30 @@ def apply_stage_from_suggestion(suggestion: str, project_state: Dict[str, Any]) 
 
 def get_active_project_title(project_id: Optional[int]) -> str:
     if project_id is None:
-        return "No project selected"
+        return "New Chat"
     for project in dbm.get_user_projects(st.session_state.user_id):
         if project["id"] == project_id:
             return project["title"]
     return "Unknown project"
+
+
+def generate_chat_title(user_message: str) -> str:
+    prompt = (
+        f"Generate a 3 to 5 word title for a chat that starts with this message: "
+        f"{user_message}. Return ONLY the title."
+    )
+    try:
+        response = title_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config={"temperature": 0.3},
+        )
+        title = (response.text or "").strip().strip('"').strip("'")
+        return title[:80] if title else "New Chat"
+    except Exception as error:
+        log_error("generate_chat_title", error)
+        fallback = " ".join(user_message.split()[:5]).strip()
+        return fallback[:80] if fallback else "New Chat"
 
 
 @retry(
@@ -841,8 +865,8 @@ if "selected_notebook_sources" not in st.session_state:
     st.session_state.selected_notebook_sources = []
 
 user_projects = dbm.get_user_projects(st.session_state.user_id)
-if "active_project_id" not in st.session_state and user_projects:
-    st.session_state.active_project_id = user_projects[0]["id"]
+if "active_project_id" not in st.session_state:
+    st.session_state.active_project_id = None
 
 active_project_id = st.session_state.get("active_project_id")
 project_state = ensure_project_state(active_project_id)
@@ -862,43 +886,27 @@ with st.sidebar:
     st.write(f"**Level:** {st.session_state.get('student_level', 'Not set')}")
     st.divider()
 
-    st.header("📁 Projects")
+    st.header("💬 Chats")
 
-    if user_projects:
-        project_titles = {project["id"]: project["title"] for project in user_projects}
-        project_ids = [project["id"] for project in user_projects]
-        current_id = st.session_state.get("active_project_id")
-        if current_id not in project_ids:
-            current_id = project_ids[0]
+    if st.button("➕ New Chat", use_container_width=True, key="new_chat_button"):
+        st.session_state.active_project_id = None
+        st.session_state.last_loaded_project_id = None
+        st.rerun()
 
-        selected_project_id = st.selectbox(
-            "Active project",
-            options=project_ids,
-            index=project_ids.index(current_id),
-            format_func=lambda project_id: project_titles[project_id],
-            label_visibility="collapsed",
-        )
-        if selected_project_id != st.session_state.get("active_project_id"):
-            st.session_state.active_project_id = selected_project_id
-            loaded_state = ensure_project_state(selected_project_id)
-            load_project_state_from_db(selected_project_id, loaded_state)
-            st.session_state.last_loaded_project_id = selected_project_id
-        else:
-            st.session_state.active_project_id = selected_project_id
-    else:
-        st.info("Create your first project below.")
-
-    with st.expander("➕ New project"):
-        new_project_title = st.text_input("Project title", placeholder="e.g. Thesis: Climate Policy")
-        if st.button("Create project", use_container_width=True):
-            title = new_project_title.strip()
-            if title:
-                new_id = dbm.create_project(st.session_state.user_id, title)
-                st.session_state.active_project_id = new_id
-                ensure_project_state(new_id)
-                st.rerun()
-            else:
-                st.warning("Enter a project title first.")
+    for project in user_projects:
+        project_id = project["id"]
+        is_active = st.session_state.get("active_project_id") == project_id
+        if st.button(
+            project["title"],
+            key=f"chat_select_{project_id}",
+            use_container_width=True,
+            type="primary" if is_active else "secondary",
+        ):
+            st.session_state.active_project_id = project_id
+            loaded_state = ensure_project_state(project_id)
+            load_project_state_from_db(project_id, loaded_state)
+            st.session_state.last_loaded_project_id = project_id
+            st.rerun()
 
     st.divider()
     sidebar_project_id = st.session_state.get("active_project_id")
@@ -934,28 +942,39 @@ tab_chat, tab_notebook, tab_writing, tab_progress = st.tabs([
 ])
 
 with tab_chat:
-    # Block A — chat history first
-    for message in project_state["messages"]:
-        render_message(message)
-
-    # Block B — suggested next steps
-    render_guided_actions(project_state, active_project_id)
-
-    # Block C — attachments
-    with st.popover("📎 Attach Files"):
-        uploaded_files = st.file_uploader(
-            "Attach files",
-            type=CHAT_ATTACHMENT_TYPES,
-            accept_multiple_files=True,
-            label_visibility="collapsed",
-            key=f"chat_attachments_{active_project_id or 'none'}",
+    if active_project_id is None:
+        st.markdown("### 👋 Welcome!")
+        st.markdown(
+            "Ask anything about your research — a new chat will be created automatically "
+            "when you send your first message."
         )
-        handle_chat_attachments(uploaded_files, active_project_id, project_state)
+    else:
+        for message in project_state["messages"]:
+            render_message(message)
 
-    # Block D — chat input (full width, always last)
+        render_guided_actions(project_state, active_project_id)
+
+        with st.popover("📎 Attach Files"):
+            uploaded_files = st.file_uploader(
+                "Attach files",
+                type=CHAT_ATTACHMENT_TYPES,
+                accept_multiple_files=True,
+                label_visibility="collapsed",
+                key=f"chat_attachments_{active_project_id}",
+            )
+            handle_chat_attachments(uploaded_files, active_project_id, project_state)
+
     prompt = st.chat_input("Describe where you are in your research...")
 
     if prompt:
+        if active_project_id is None:
+            generated_title = generate_chat_title(prompt)
+            new_id = dbm.create_project(st.session_state.user_id, generated_title)
+            st.session_state.active_project_id = new_id
+            st.session_state.last_loaded_project_id = new_id
+            active_project_id = new_id
+            project_state = ensure_project_state(new_id)
+
         if prompt.strip().lower() in RESET_COMMANDS:
             handle_chat_reset(active_project_id, project_state)
             st.rerun()
@@ -976,12 +995,11 @@ with tab_chat:
         with st.spinner(spinner_label):
             generate_assistant_response(project_state, explicit_triage=False)
 
-        if active_project_id is not None:
-            dbm.save_project_state(
-                active_project_id,
-                project_state.get("current_stage"),
-                project_state.get("messages", []),
-            )
+        dbm.save_project_state(
+            active_project_id,
+            project_state.get("current_stage"),
+            project_state.get("messages", []),
+        )
         st.rerun()
 
 with tab_notebook:
