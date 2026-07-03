@@ -786,6 +786,54 @@ def handle_chat_attachments(
 
 st.set_page_config(page_title="My Research Assistant", page_icon="🎓", layout="wide")
 
+st.markdown(
+    """
+    <style>
+    div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
+        flex-direction: row-reverse;
+        justify-content: flex-start;
+    }
+
+    div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) > div {
+        width: 100%;
+        display: flex;
+        flex-direction: row-reverse;
+    }
+
+    div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stMarkdownContainer"] {
+        background-color: #f0f2f6;
+        color: #1a1a1a;
+        border-radius: 18px;
+        padding: 0.75rem 1rem;
+        max-width: 70%;
+        margin-left: auto;
+        margin-right: 0;
+    }
+
+    div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="chatAvatarIcon-user"] {
+        display: none;
+    }
+
+    div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
+        background: transparent;
+        border: none;
+        padding-left: 0;
+    }
+
+    div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stMarkdownContainer"] {
+        background: transparent;
+        max-width: 100%;
+        padding-left: 0;
+    }
+
+    div[data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="chatAvatarIcon-assistant"] {
+        display: none;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "user_id" not in st.session_state:
@@ -895,17 +943,41 @@ with st.sidebar:
         for project in user_projects:
             project_id = project["id"]
             is_active = st.session_state.get("active_project_id") == project_id
-            if st.button(
-                project["title"],
-                key=f"chat_select_{project_id}",
-                use_container_width=True,
-                type="primary" if is_active else "secondary",
-            ):
-                st.session_state.active_project_id = project_id
-                loaded_state = ensure_project_state(project_id)
-                load_project_state_from_db(project_id, loaded_state)
-                st.session_state.last_loaded_project_id = project_id
-                st.rerun()
+            col1, col2, col3 = st.columns([6, 2, 2])
+
+            with col1:
+                if st.button(
+                    project["title"],
+                    key=f"chat_select_{project_id}",
+                    use_container_width=True,
+                    type="primary" if is_active else "secondary",
+                ):
+                    st.session_state.active_project_id = project_id
+                    loaded_state = ensure_project_state(project_id)
+                    load_project_state_from_db(project_id, loaded_state)
+                    st.session_state.last_loaded_project_id = project_id
+                    st.rerun()
+
+            with col2:
+                with st.popover("✏️", use_container_width=True):
+                    new_title = st.text_input(
+                        "New title",
+                        value=project["title"],
+                        key=f"rename_input_{project_id}",
+                    )
+                    if st.button("Save", key=f"rename_save_{project_id}", use_container_width=True):
+                        if new_title.strip():
+                            dbm.update_project_title(project_id, new_title.strip())
+                            st.rerun()
+
+            with col3:
+                if st.button("🗑️", key=f"delete_{project_id}", use_container_width=True):
+                    dbm.delete_project(project_id)
+                    if st.session_state.get("project_states") and str(project_id) in st.session_state.project_states:
+                        del st.session_state.project_states[str(project_id)]
+                    st.session_state.active_project_id = None
+                    st.session_state.last_loaded_project_id = None
+                    st.rerun()
 
     st.divider()
     sidebar_project_id = st.session_state.get("active_project_id")

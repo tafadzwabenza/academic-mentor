@@ -286,6 +286,34 @@ def get_user_projects(user_id: str) -> List[Dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def update_project_title(project_id: int, new_title: str) -> None:
+    with _connect() as conn:
+        with _cursor(conn) as cur:
+            cur.execute(
+                """
+                UPDATE projects
+                SET title = %s
+                WHERE id = %s
+                """,
+                (new_title.strip(), project_id),
+            )
+        conn.commit()
+
+
+def delete_project(project_id: int) -> None:
+    with _connect() as conn:
+        with _cursor(conn) as cur:
+            cur.execute(
+                "DELETE FROM sources WHERE project_id = %s",
+                (project_id,),
+            )
+            cur.execute(
+                "DELETE FROM projects WHERE id = %s",
+                (project_id,),
+            )
+        conn.commit()
+
+
 def get_project_sources(project_id: int) -> List[Dict[str, Any]]:
     with _connect() as conn:
         with _cursor(conn) as cur:
