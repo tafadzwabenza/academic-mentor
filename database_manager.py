@@ -1,6 +1,9 @@
 import json
 import sqlite3
+import uuid
 from typing import Any, Dict, List, Optional
+
+import bcrypt
 
 DB_PATH = "platform_database.db"
 
@@ -19,6 +22,8 @@ def init_platform_db() -> None:
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 email TEXT,
+                username TEXT UNIQUE,
+                password_hash TEXT,
                 student_name TEXT,
                 student_level TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -70,6 +75,8 @@ def _migrate_platform_schema(conn: sqlite3.Connection) -> None:
     user_columns = {
         "student_name": "TEXT",
         "student_level": "TEXT",
+        "username": "TEXT",
+        "password_hash": "TEXT",
     }
     project_columns = {
         "current_stage": "TEXT",
@@ -113,13 +120,70 @@ def get_user(user_id: str) -> Optional[Dict[str, Any]]:
     with _connect() as conn:
         row = conn.execute(
             """
-            SELECT id, name, email, student_name, student_level, created_at
+            SELECT id, name, email, username, student_name, student_level, created_at
             FROM users
             WHERE id = ?
             """,
             (user_id,),
         ).fetchone()
     return dict(row) if row else None
+
+
+def register_user(username: str, password: str) -> str:
+    username = username.strip()
+    if not username or not password:
+        raise ValueError("Username and password are required.")
+
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    password_hash = bcrypt.hashpw(
+        password.encode("utf-8"),
+        bcrypt.gensalt(),
+    )
+
+    with _connect() as conn:
+        try:
+            conn.execute(
+                """
+                INSERT INTO users (id, name, username, password_hash, email)
+                VALUES (?, ?, ?, ?, NULL)
+                """,
+                (user_id, username, username, password_hash.decode("utf-8")),
+            )
+            conn.commit()
+        except sqlite3.IntegrityError as error:
+            if "UNIQUE constraint failed" in str(error):
+                raise ValueError("Username already taken. Please choose another.") from error
+            raise
+
+    return user_id
+
+
+def authenticate_user(username: str, password: str) -> Optional[str]:
+    username = username.strip()
+    if not username or not password:
+        return None
+
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT id, password_hash
+            FROM users
+            WHERE username = ?
+            """,
+            (username,),
+        ).fetchone()
+
+    if row is None or not row["password_hash"]:
+        return None
+
+    stored_hash = row["password_hash"]
+    if isinstance(stored_hash, str):
+        stored_hash = stored_hash.encode("utf-8")
+
+    if bcrypt.checkpw(password.encode("utf-8"), stored_hash):
+        return row["id"]
+
+    return None
 
 
 def update_user_profile(user_id: str, name: str, level: Optional[str]) -> None:
