@@ -5,3 +5,4 @@ GitPython
 python-dotenv
 PyPDF2
 bcrypt
+psycopg2-binary

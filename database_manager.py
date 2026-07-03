@@ -1,68 +1,78 @@
 import json
-import sqlite3
 import uuid
 from typing import Any, Dict, List, Optional
 
 import bcrypt
+import psycopg2
+import psycopg2.extras
+import streamlit as st
 
-DB_PATH = "platform_database.db"
+
+def _connect():
+    return psycopg2.connect(st.secrets["SUPABASE_URL"])
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+def _cursor(conn):
+    return conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
 
 def init_platform_db() -> None:
     with _connect() as conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                email TEXT,
-                username TEXT UNIQUE,
-                password_hash TEXT,
-                student_name TEXT,
-                student_level TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS projects (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                current_stage TEXT,
-                chat_history TEXT,
-                draft_content TEXT,
-                notebook_chat_history TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (id)
-            );
-
-            CREATE TABLE IF NOT EXISTS sources (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id INTEGER NOT NULL,
-                filename TEXT NOT NULL,
-                extracted_text TEXT,
-                preview_summary TEXT,
-                title TEXT,
-                authors TEXT,
-                summary TEXT,
-                file_path TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (project_id) REFERENCES projects (id)
-            );
-            """
-        )
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO users (id, name, email)
-            VALUES ('student_123', 'Demo Student', 'student@example.com')
-            """
-        )
-        _migrate_platform_schema(conn)
+        with _cursor(conn) as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    email TEXT,
+                    username TEXT UNIQUE,
+                    password_hash TEXT,
+                    student_name TEXT,
+                    student_level TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS projects (
+                    id SERIAL PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    current_stage TEXT,
+                    chat_history TEXT,
+                    draft_content TEXT,
+                    notebook_chat_history TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sources (
+                    id SERIAL PRIMARY KEY,
+                    project_id INTEGER NOT NULL,
+                    filename TEXT NOT NULL,
+                    extracted_text TEXT,
+                    preview_summary TEXT,
+                    title TEXT,
+                    authors TEXT,
+                    summary TEXT,
+                    file_path TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (project_id) REFERENCES projects (id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                INSERT INTO users (id, name, email)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                ("student_123", "Demo Student", "student@example.com"),
+            )
         conn.commit()
 
     existing = get_user_projects("student_123")
@@ -71,61 +81,18 @@ def init_platform_db() -> None:
         create_project("student_123", "Assignment: Drug Impact")
 
 
-def _migrate_platform_schema(conn: sqlite3.Connection) -> None:
-    user_columns = {
-        "student_name": "TEXT",
-        "student_level": "TEXT",
-        "username": "TEXT",
-        "password_hash": "TEXT",
-    }
-    project_columns = {
-        "current_stage": "TEXT",
-        "chat_history": "TEXT",
-        "draft_content": "TEXT",
-        "notebook_chat_history": "TEXT",
-    }
-    for column, col_type in user_columns.items():
-        if column not in _table_columns(conn, "users"):
-            conn.execute(f"ALTER TABLE users ADD COLUMN {column} {col_type}")
-    for column, col_type in project_columns.items():
-        if column not in _table_columns(conn, "projects"):
-            conn.execute(f"ALTER TABLE projects ADD COLUMN {column} {col_type}")
-    source_columns = {
-        "title": "TEXT",
-        "authors": "TEXT",
-        "summary": "TEXT",
-        "file_path": "TEXT",
-    }
-    for column, col_type in source_columns.items():
-        if column not in _table_columns(conn, "sources"):
-            conn.execute(f"ALTER TABLE sources ADD COLUMN {column} {col_type}")
-    conn.execute(
-        """
-        UPDATE sources
-        SET title = COALESCE(title, filename),
-            authors = COALESCE(authors, 'Unknown'),
-            summary = COALESCE(summary, preview_summary),
-            file_path = COALESCE(file_path, filename)
-        WHERE title IS NULL OR authors IS NULL OR summary IS NULL OR file_path IS NULL
-        """
-    )
-
-
-def _table_columns(conn: sqlite3.Connection, table: str) -> List[str]:
-    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    return [row[1] for row in rows]
-
-
 def get_user(user_id: str) -> Optional[Dict[str, Any]]:
     with _connect() as conn:
-        row = conn.execute(
-            """
-            SELECT id, name, email, username, student_name, student_level, created_at
-            FROM users
-            WHERE id = ?
-            """,
-            (user_id,),
-        ).fetchone()
+        with _cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT id, name, email, username, student_name, student_level, created_at
+                FROM users
+                WHERE id = %s
+                """,
+                (user_id,),
+            )
+            row = cur.fetchone()
     return dict(row) if row else None
 
 
@@ -142,16 +109,18 @@ def register_user(username: str, password: str) -> str:
 
     with _connect() as conn:
         try:
-            conn.execute(
-                """
-                INSERT INTO users (id, name, username, password_hash, email)
-                VALUES (?, ?, ?, ?, NULL)
-                """,
-                (user_id, username, username, password_hash.decode("utf-8")),
-            )
+            with _cursor(conn) as cur:
+                cur.execute(
+                    """
+                    INSERT INTO users (id, name, username, password_hash, email)
+                    VALUES (%s, %s, %s, %s, NULL)
+                    """,
+                    (user_id, username, username, password_hash.decode("utf-8")),
+                )
             conn.commit()
-        except sqlite3.IntegrityError as error:
-            if "UNIQUE constraint failed" in str(error):
+        except psycopg2.IntegrityError as error:
+            conn.rollback()
+            if "unique" in str(error).lower() or "duplicate" in str(error).lower():
                 raise ValueError("Username already taken. Please choose another.") from error
             raise
 
@@ -164,14 +133,16 @@ def authenticate_user(username: str, password: str) -> Optional[str]:
         return None
 
     with _connect() as conn:
-        row = conn.execute(
-            """
-            SELECT id, password_hash
-            FROM users
-            WHERE username = ?
-            """,
-            (username,),
-        ).fetchone()
+        with _cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT id, password_hash
+                FROM users
+                WHERE username = %s
+                """,
+                (username,),
+            )
+            row = cur.fetchone()
 
     if row is None or not row["password_hash"]:
         return None
@@ -188,14 +159,15 @@ def authenticate_user(username: str, password: str) -> Optional[str]:
 
 def update_user_profile(user_id: str, name: str, level: Optional[str]) -> None:
     with _connect() as conn:
-        conn.execute(
-            """
-            UPDATE users
-            SET student_name = ?, student_level = ?
-            WHERE id = ?
-            """,
-            (name, level, user_id),
-        )
+        with _cursor(conn) as cur:
+            cur.execute(
+                """
+                UPDATE users
+                SET student_name = %s, student_level = %s
+                WHERE id = %s
+                """,
+                (name, level, user_id),
+            )
         conn.commit()
 
 
@@ -205,14 +177,15 @@ def save_project_state(
     messages_list: List[Dict[str, Any]],
 ) -> None:
     with _connect() as conn:
-        conn.execute(
-            """
-            UPDATE projects
-            SET current_stage = ?, chat_history = ?
-            WHERE id = ?
-            """,
-            (stage, json.dumps(messages_list), project_id),
-        )
+        with _cursor(conn) as cur:
+            cur.execute(
+                """
+                UPDATE projects
+                SET current_stage = %s, chat_history = %s
+                WHERE id = %s
+                """,
+                (stage, json.dumps(messages_list), project_id),
+            )
         conn.commit()
 
 
@@ -221,27 +194,30 @@ def save_notebook_state(
     messages_list: List[Dict[str, Any]],
 ) -> None:
     with _connect() as conn:
-        conn.execute(
-            """
-            UPDATE projects
-            SET notebook_chat_history = ?
-            WHERE id = ?
-            """,
-            (json.dumps(messages_list), project_id),
-        )
+        with _cursor(conn) as cur:
+            cur.execute(
+                """
+                UPDATE projects
+                SET notebook_chat_history = %s
+                WHERE id = %s
+                """,
+                (json.dumps(messages_list), project_id),
+            )
         conn.commit()
 
 
 def get_project_state(project_id: int) -> Dict[str, Any]:
     with _connect() as conn:
-        row = conn.execute(
-            """
-            SELECT current_stage, chat_history, draft_content, notebook_chat_history
-            FROM projects
-            WHERE id = ?
-            """,
-            (project_id,),
-        ).fetchone()
+        with _cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT current_stage, chat_history, draft_content, notebook_chat_history
+                FROM projects
+                WHERE id = %s
+                """,
+                (project_id,),
+            )
+            row = cur.fetchone()
     if row is None:
         return {
             "current_stage": None,
@@ -266,61 +242,74 @@ def get_project_state(project_id: int) -> Dict[str, Any]:
 
 def save_project_draft(project_id: int, draft_text: str) -> None:
     with _connect() as conn:
-        conn.execute(
-            """
-            UPDATE projects
-            SET draft_content = ?
-            WHERE id = ?
-            """,
-            (draft_text, project_id),
-        )
+        with _cursor(conn) as cur:
+            cur.execute(
+                """
+                UPDATE projects
+                SET draft_content = %s
+                WHERE id = %s
+                """,
+                (draft_text, project_id),
+            )
         conn.commit()
 
 
 def create_project(user_id: str, title: str) -> int:
     with _connect() as conn:
-        cursor = conn.execute(
-            "INSERT INTO projects (user_id, title) VALUES (?, ?)",
-            (user_id, title.strip()),
-        )
+        with _cursor(conn) as cur:
+            cur.execute(
+                """
+                INSERT INTO projects (user_id, title)
+                VALUES (%s, %s)
+                RETURNING id
+                """,
+                (user_id, title.strip()),
+            )
+            row = cur.fetchone()
         conn.commit()
-        return int(cursor.lastrowid)
+        return int(row["id"])
 
 
 def get_user_projects(user_id: str) -> List[Dict[str, Any]]:
     with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, user_id, title, created_at
-            FROM projects
-            WHERE user_id = ?
-            ORDER BY created_at DESC, id DESC
-            """,
-            (user_id,),
-        ).fetchall()
+        with _cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT id, user_id, title, created_at
+                FROM projects
+                WHERE user_id = %s
+                ORDER BY created_at DESC, id DESC
+                """,
+                (user_id,),
+            )
+            rows = cur.fetchall()
     return [dict(row) for row in rows]
 
 
 def get_project_sources(project_id: int) -> List[Dict[str, Any]]:
     with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, title, authors, summary, file_path
-            FROM sources
-            WHERE project_id = ?
-            ORDER BY created_at DESC, id DESC
-            """,
-            (project_id,),
-        ).fetchall()
+        with _cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT id, title, authors, summary, file_path
+                FROM sources
+                WHERE project_id = %s
+                ORDER BY created_at DESC, id DESC
+                """,
+                (project_id,),
+            )
+            rows = cur.fetchall()
     return [dict(row) for row in rows]
 
 
 def get_project_source_count(project_id: int) -> int:
     with _connect() as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) AS count FROM sources WHERE project_id = ?",
-            (project_id,),
-        ).fetchone()
+        with _cursor(conn) as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS count FROM sources WHERE project_id = %s",
+                (project_id,),
+            )
+            row = cur.fetchone()
     return int(row["count"]) if row else 0
 
 
@@ -331,24 +320,27 @@ def save_source(
     preview_summary: str,
 ) -> int:
     with _connect() as conn:
-        cursor = conn.execute(
-            """
-            INSERT INTO sources (
-                project_id, filename, extracted_text, preview_summary,
-                title, authors, summary, file_path
+        with _cursor(conn) as cur:
+            cur.execute(
+                """
+                INSERT INTO sources (
+                    project_id, filename, extracted_text, preview_summary,
+                    title, authors, summary, file_path
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    project_id,
+                    filename,
+                    extracted_text,
+                    preview_summary,
+                    filename,
+                    "Unknown",
+                    preview_summary,
+                    filename,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                project_id,
-                filename,
-                extracted_text,
-                preview_summary,
-                filename,
-                "Unknown",
-                preview_summary,
-                filename,
-            ),
-        )
+            row = cur.fetchone()
         conn.commit()
-        return int(cursor.lastrowid)
+        return int(row["id"])
