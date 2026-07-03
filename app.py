@@ -941,43 +941,29 @@ with st.sidebar:
 
     with st.expander("📁 Research Projects", expanded=False):
         for project in user_projects:
-            project_id = project["id"]
-            is_active = st.session_state.get("active_project_id") == project_id
-            col1, col2, col3 = st.columns([6, 2, 2])
+            c1, c2 = st.columns([0.85, 0.15])
 
-            with col1:
-                if st.button(
-                    project["title"],
-                    key=f"chat_select_{project_id}",
-                    use_container_width=True,
-                    type="primary" if is_active else "secondary",
-                ):
-                    st.session_state.active_project_id = project_id
-                    loaded_state = ensure_project_state(project_id)
-                    load_project_state_from_db(project_id, loaded_state)
-                    st.session_state.last_loaded_project_id = project_id
+            with c1:
+                if st.button(project["title"], key=f"btn_{project['id']}"):
+                    st.session_state.active_project_id = project["id"]
                     st.rerun()
 
-            with col2:
-                with st.popover("✏️", use_container_width=True):
+            with c2:
+                with st.popover("⋮"):
                     new_title = st.text_input(
-                        "New title",
+                        "New Name",
                         value=project["title"],
-                        key=f"rename_input_{project_id}",
+                        key=f"rename_{project['id']}",
                     )
-                    if st.button("Save", key=f"rename_save_{project_id}", use_container_width=True):
-                        if new_title.strip():
-                            dbm.update_project_title(project_id, new_title.strip())
-                            st.rerun()
+                    if st.button("Save Name", key=f"save_{project['id']}"):
+                        dbm.update_project_title(project["id"], new_title)
+                        st.rerun()
 
-            with col3:
-                if st.button("🗑️", key=f"delete_{project_id}", use_container_width=True):
-                    dbm.delete_project(project_id)
-                    if st.session_state.get("project_states") and str(project_id) in st.session_state.project_states:
-                        del st.session_state.project_states[str(project_id)]
-                    st.session_state.active_project_id = None
-                    st.session_state.last_loaded_project_id = None
-                    st.rerun()
+                    if st.button("Delete Project", key=f"del_{project['id']}"):
+                        dbm.delete_project(project["id"])
+                        if st.session_state.active_project_id == project["id"]:
+                            st.session_state.active_project_id = None
+                        st.rerun()
 
     st.divider()
     sidebar_project_id = st.session_state.get("active_project_id")
