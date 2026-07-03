@@ -49,7 +49,7 @@ PAST_IDEATION_STAGES = {
 }
 
 RESET_COMMANDS = {"reset", "start over"}
-VALID_STUDENT_LEVELS = {"Undergraduate", "Masters", "PhD"}
+VALID_STUDENT_LEVELS = {"Other", "Undergraduate", "Masters", "PhD"}
 SOURCE_REQUEST_PHRASES = (
     "source",
     "sources",
@@ -246,6 +246,13 @@ def messages_to_transcript(messages: List[dict]) -> str:
     return "\n\n".join(lines)
 
 
+def mentor_level_for_ai(level: Optional[str] = None) -> str:
+    mentor_level = level or st.session_state.get("student_level", "Unknown")
+    if mentor_level == "Other":
+        mentor_level = "Pre-Undergraduate / High School level"
+    return mentor_level
+
+
 def maybe_update_student_profile(prompt: str) -> None:
     if is_onboarded():
         return
@@ -259,6 +266,9 @@ def maybe_update_student_profile(prompt: str) -> None:
         level_updated = True
     elif any(term in lower for term in ("undergraduate", "undergrad", "bachelor")):
         st.session_state.student_level = "Undergraduate"
+        level_updated = True
+    elif any(term in lower for term in ("high school", "a-level", "a level", "secondary")):
+        st.session_state.student_level = "Other"
         level_updated = True
 
     name_updated = False
@@ -375,7 +385,7 @@ def route_to_agent(
     level: Optional[str] = None,
 ) -> Tuple[str, Optional[str], bool]:
     """Return (response_text, optional_mermaid_code, success)."""
-    mentor_level = level or st.session_state.get("student_level", "Unknown")
+    mentor_level = mentor_level_for_ai(level)
     transcript = messages_to_transcript(messages)
     latest_prompt = messages[-1]["content"] if messages else ""
 
@@ -785,7 +795,7 @@ if not st.session_state.logged_in:
         signup_name = st.text_input("Your Name")
         signup_level = st.selectbox(
             "Current Education Level",
-            ["Undergraduate", "Masters", "PhD"],
+            ["Other", "Undergraduate", "Masters", "PhD"],
         )
         signup_username = st.text_input("Choose a username", key="signup_username")
         signup_password = st.text_input("Choose a password", type="password", key="signup_password")
@@ -1095,6 +1105,7 @@ with tab_writing:
                 project_state.get("draft_content", ""),
             )
             student_level = st.session_state.get("student_level", "Unknown")
+            mentor_level = mentor_level_for_ai(student_level)
             referencing_style = project_state.get("referencing_style", "APA")
 
             structural_clicked = st.button(
@@ -1121,20 +1132,20 @@ with tab_writing:
                         if structural_clicked:
                             result = writing_scaffolder(
                                 draft_for_tools,
-                                level=student_level or "Unknown",
+                                level=mentor_level,
                             )
                             st.info(result.content)
                         elif citations_clicked:
                             result = citation_validator(
                                 draft_for_tools,
                                 referencing_style=referencing_style,
-                                level=student_level or "Unknown",
+                                level=mentor_level,
                             )
                             st.markdown(result.content)
                         elif plagiarism_clicked:
                             result = check_integrity(
                                 draft_for_tools,
-                                level=student_level or "Unknown",
+                                level=mentor_level,
                             )
                             st.markdown(result)
 
