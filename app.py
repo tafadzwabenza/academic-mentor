@@ -886,27 +886,26 @@ with st.sidebar:
     st.write(f"**Level:** {st.session_state.get('student_level', 'Not set')}")
     st.divider()
 
-    st.header("💬 Chats")
-
     if st.button("➕ New Chat", use_container_width=True, key="new_chat_button"):
         st.session_state.active_project_id = None
         st.session_state.last_loaded_project_id = None
         st.rerun()
 
-    for project in user_projects:
-        project_id = project["id"]
-        is_active = st.session_state.get("active_project_id") == project_id
-        if st.button(
-            project["title"],
-            key=f"chat_select_{project_id}",
-            use_container_width=True,
-            type="primary" if is_active else "secondary",
-        ):
-            st.session_state.active_project_id = project_id
-            loaded_state = ensure_project_state(project_id)
-            load_project_state_from_db(project_id, loaded_state)
-            st.session_state.last_loaded_project_id = project_id
-            st.rerun()
+    with st.expander("📁 Research Projects", expanded=False):
+        for project in user_projects:
+            project_id = project["id"]
+            is_active = st.session_state.get("active_project_id") == project_id
+            if st.button(
+                project["title"],
+                key=f"chat_select_{project_id}",
+                use_container_width=True,
+                type="primary" if is_active else "secondary",
+            ):
+                st.session_state.active_project_id = project_id
+                loaded_state = ensure_project_state(project_id)
+                load_project_state_from_db(project_id, loaded_state)
+                st.session_state.last_loaded_project_id = project_id
+                st.rerun()
 
     st.divider()
     sidebar_project_id = st.session_state.get("active_project_id")
