@@ -754,7 +754,55 @@ def handle_chat_attachments(
 
 st.set_page_config(page_title="My Research Assistant", page_icon="🎓", layout="wide")
 
-st.session_state.user_id = "student_123"
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "user_id" not in st.session_state:
+    st.session_state.user_id = None
+
+if st.session_state.logged_in and not st.session_state.user_id:
+    st.session_state.logged_in = False
+
+if not st.session_state.logged_in:
+    st.title("🎓 My Research Assistant")
+    st.markdown("Sign in to save your research projects and pick up where you left off.")
+
+    login_tab, signup_tab = st.tabs(["Login", "Sign Up"])
+
+    with login_tab:
+        login_username = st.text_input("Username", key="login_username")
+        login_password = st.text_input("Password", type="password", key="login_password")
+        if st.button("Log in", use_container_width=True, key="login_button"):
+            if login_username.strip() and login_password:
+                db_user_id = dbm.authenticate_user(login_username.strip(), login_password)
+                if db_user_id:
+                    st.session_state.logged_in = True
+                    st.session_state.user_id = db_user_id
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password.")
+            else:
+                st.warning("Please enter your username and password.")
+
+    with signup_tab:
+        signup_username = st.text_input("Choose a username", key="signup_username")
+        signup_password = st.text_input("Choose a password", type="password", key="signup_password")
+        signup_confirm = st.text_input("Confirm password", type="password", key="signup_confirm")
+        if st.button("Create account", use_container_width=True, key="signup_button"):
+            if not signup_username.strip() or not signup_password:
+                st.warning("Please enter a username and password.")
+            elif signup_password != signup_confirm:
+                st.error("Passwords do not match.")
+            else:
+                try:
+                    db_user_id = dbm.register_user(signup_username.strip(), signup_password)
+                    st.session_state.logged_in = True
+                    st.session_state.user_id = db_user_id
+                    st.rerun()
+                except ValueError as error:
+                    st.error(str(error))
+
+if not st.session_state.logged_in:
+    st.stop()
 
 user_record = dbm.get_user(st.session_state.user_id)
 if user_record:
