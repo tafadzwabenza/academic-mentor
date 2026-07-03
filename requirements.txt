@@ -3,3 +3,4 @@ google-genai
 google-auth
 GitPython
 python-dotenv
+PyPDF2
