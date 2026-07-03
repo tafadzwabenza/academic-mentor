@@ -605,18 +605,16 @@ def render_guided_actions(project_state: Dict[str, Any], project_id: Optional[in
     else:
         suggestions = get_dynamic_suggestions(stage, message_count)
 
-    prev_key = f"prev_pill_{project_id or 'none'}_{stage}_{message_count}"
-    pills_key = f"guided_pills_{project_id or 'none'}_{stage}_{message_count}"
-
-    selected = st.pills(
-        "Suggested next steps",
-        options=suggestions,
-        selection_mode="single",
-        key=pills_key,
-    )
-    if selected and st.session_state.get(prev_key) != selected:
-        st.session_state[prev_key] = selected
-        apply_suggestion_choice(selected, project_id, project_state)
+    st.markdown("**Suggested next steps**")
+    cols = st.columns(len(suggestions))
+    for index, suggestion in enumerate(suggestions):
+        with cols[index]:
+            if st.button(
+                suggestion,
+                key=f"suggestion_{project_id or 'none'}_{stage}_{message_count}_{index}",
+                use_container_width=True,
+            ):
+                apply_suggestion_choice(suggestion, project_id, project_state)
 
 
 def render_progress_checklist(current_stage: Optional[str], project_id: int) -> None:
@@ -784,6 +782,11 @@ if not st.session_state.logged_in:
                 st.warning("Please enter your username and password.")
 
     with signup_tab:
+        signup_name = st.text_input("Your Name")
+        signup_level = st.selectbox(
+            "Current Education Level",
+            ["Undergraduate", "Masters", "PhD"],
+        )
         signup_username = st.text_input("Choose a username", key="signup_username")
         signup_password = st.text_input("Choose a password", type="password", key="signup_password")
         signup_confirm = st.text_input("Confirm password", type="password", key="signup_confirm")
@@ -795,8 +798,11 @@ if not st.session_state.logged_in:
             else:
                 try:
                     db_user_id = dbm.register_user(signup_username.strip(), signup_password)
+                    dbm.update_user_profile(db_user_id, signup_name, signup_level)
                     st.session_state.logged_in = True
                     st.session_state.user_id = db_user_id
+                    st.session_state.student_name = signup_name
+                    st.session_state.student_level = signup_level
                     st.rerun()
                 except ValueError as error:
                     st.error(str(error))
