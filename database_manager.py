@@ -82,6 +82,11 @@ def init_platform_db() -> None:
 
 
 def get_user(user_id: str) -> Optional[Dict[str, Any]]:
+    return _get_user_cached(user_id)
+
+
+@st.cache_data(ttl=600)
+def _get_user_cached(user_id: str) -> Optional[Dict[str, Any]]:
     with _connect() as conn:
         with _cursor(conn) as cur:
             cur.execute(
@@ -169,6 +174,7 @@ def update_user_profile(user_id: str, name: str, level: Optional[str]) -> None:
                 (name, level, user_id),
             )
         conn.commit()
+    st.cache_data.clear()
 
 
 def save_project_state(
@@ -267,10 +273,16 @@ def create_project(user_id: str, title: str) -> int:
             )
             row = cur.fetchone()
         conn.commit()
+        st.cache_data.clear()
         return int(row["id"])
 
 
 def get_user_projects(user_id: str) -> List[Dict[str, Any]]:
+    return _get_user_projects_cached(user_id)
+
+
+@st.cache_data(ttl=600)
+def _get_user_projects_cached(user_id: str) -> List[Dict[str, Any]]:
     with _connect() as conn:
         with _cursor(conn) as cur:
             cur.execute(
@@ -298,6 +310,7 @@ def update_project_title(project_id: int, new_title: str) -> None:
                 (new_title.strip(), project_id),
             )
         conn.commit()
+    st.cache_data.clear()
 
 
 def delete_project(project_id: int) -> None:
@@ -312,6 +325,7 @@ def delete_project(project_id: int) -> None:
                 (project_id,),
             )
         conn.commit()
+    st.cache_data.clear()
 
 
 def get_project_sources(project_id: int) -> List[Dict[str, Any]]:

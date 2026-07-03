@@ -957,12 +957,14 @@ with st.sidebar:
                     )
                     if st.button("Save Name", key=f"save_{project['id']}"):
                         dbm.update_project_title(project["id"], new_title)
+                        st.cache_data.clear()
                         st.rerun()
 
                     if st.button("Delete Project", key=f"del_{project['id']}"):
                         dbm.delete_project(project["id"])
                         if st.session_state.active_project_id == project["id"]:
                             st.session_state.active_project_id = None
+                        st.cache_data.clear()
                         st.rerun()
 
     st.divider()
@@ -1027,6 +1029,7 @@ with tab_chat:
         if active_project_id is None:
             generated_title = generate_chat_title(prompt)
             new_id = dbm.create_project(st.session_state.user_id, generated_title)
+            st.cache_data.clear()
             st.session_state.active_project_id = new_id
             st.session_state.last_loaded_project_id = new_id
             active_project_id = new_id
