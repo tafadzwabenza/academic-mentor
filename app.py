@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -913,12 +914,14 @@ if not st.session_state.logged_in:
                 st.error("Passwords do not match.")
             else:
                 try:
-                    db_user_id = dbm.register_user(signup_username.strip(), signup_password)
-                    dbm.update_user_profile(db_user_id, signup_name, signup_level)
+                    new_user_id = dbm.register_user(signup_username.strip(), signup_password)
+                    dbm.update_user_profile(new_user_id, signup_name, signup_level)
+                    st.success("Account created successfully! Logging you in...")
                     st.session_state.logged_in = True
-                    st.session_state.user_id = db_user_id
+                    st.session_state.user_id = new_user_id
                     st.session_state.student_name = signup_name
                     st.session_state.student_level = signup_level
+                    time.sleep(1)
                     st.rerun()
                 except ValueError as error:
                     st.error(str(error))
