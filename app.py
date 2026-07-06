@@ -4,22 +4,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
 from dotenv import load_dotenv
-from google import genai
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 import database_manager as dbm
-from app_sandbox import StudentDiagnostic, assess_student_state
-from citation_agent import citation_validator
-from integrity_agent import check_integrity
-from literature_agent import literature_search
-from methodology_agent import methodology_mentor
-from notebook_agent import process_file_upload
-from socratic_agent import socratic_refiner
-from visualizer_agent import conceptual_visualizer
-from writing_agent import writing_scaffolder
 
 load_dotenv()
-title_client = genai.Client()
 
 dbm.init_platform_db()
 
@@ -355,11 +344,14 @@ def get_active_project_title(project_id: Optional[int]) -> str:
 
 
 def generate_chat_title(user_message: str) -> str:
+    from google import genai
+
     prompt = (
         f"Generate a 3 to 5 word title for a chat that starts with this message: "
         f"{user_message}. Return ONLY the title."
     )
     try:
+        title_client = genai.Client()
         response = title_client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt,
@@ -381,6 +373,8 @@ def generate_chat_title(user_message: str) -> str:
     reraise=True,
 )
 def assess_student_state_with_retry(prompt: str) -> str:
+    from app_sandbox import assess_student_state
+
     return assess_student_state(prompt)
 
 
@@ -415,9 +409,13 @@ def route_to_agent(
 
     try:
         if stage == "1_Ideation":
+            from socratic_agent import socratic_refiner
+
             result = socratic_refiner(latest_prompt, chat_messages=messages, level=mentor_level)
             return result.content, None, True
         if stage == "2_Literature":
+            from literature_agent import literature_search
+
             search_type = search_depth_to_type(search_depth)
             return (
                 literature_search(
@@ -430,12 +428,18 @@ def route_to_agent(
                 True,
             )
         if stage == "3_Methodology":
+            from methodology_agent import methodology_mentor
+
             result = methodology_mentor(latest_prompt, chat_messages=messages, level=mentor_level)
             return result.content, None, True
         if stage == "4_Writing":
+            from writing_agent import writing_scaffolder
+
             result = writing_scaffolder(latest_prompt, chat_messages=messages, level=mentor_level)
             return result.content, None, True
         if stage == "5_Review":
+            from citation_agent import citation_validator
+
             result = citation_validator(
                 transcript,
                 referencing_style=referencing_style,
@@ -444,8 +448,12 @@ def route_to_agent(
             )
             return result.content, None, True
         if stage == "6_Integrity":
+            from integrity_agent import check_integrity
+
             return check_integrity(transcript, level=mentor_level), None, True
         if stage == "7_Visualizer":
+            from visualizer_agent import conceptual_visualizer
+
             result = conceptual_visualizer(latest_prompt, chat_messages=messages, level=mentor_level)
             return result.content, result.mermaid_code, True
         if stage == "Error":
@@ -460,7 +468,9 @@ def route_to_agent(
         return service_error_message(), None, False
 
 
-def run_triage(prompt: str, project_state: Dict[str, Any]) -> StudentDiagnostic:
+def run_triage(prompt: str, project_state: Dict[str, Any]):
+    from app_sandbox import StudentDiagnostic
+
     st.sidebar.info("🧠 Triage Agent is analyzing the student's progress...")
     diagnosis_raw = assess_student_state_with_retry(prompt)
     diagnosis = StudentDiagnostic.model_validate_json(diagnosis_raw)
@@ -745,6 +755,8 @@ def handle_chat_attachments(
 ) -> None:
     if not uploaded_files or project_id is None:
         return
+
+    from notebook_agent import process_file_upload
 
     new_attachments = False
     processed = project_state["processed_upload_keys"]
@@ -1208,12 +1220,16 @@ with tab_writing:
                 else:
                     with st.spinner("Analyzing..."):
                         if structural_clicked:
+                            from writing_agent import writing_scaffolder
+
                             result = writing_scaffolder(
                                 draft_for_tools,
                                 level=mentor_level,
                             )
                             st.info(result.content)
                         elif citations_clicked:
+                            from citation_agent import citation_validator
+
                             result = citation_validator(
                                 draft_for_tools,
                                 referencing_style=referencing_style,
@@ -1221,6 +1237,8 @@ with tab_writing:
                             )
                             st.markdown(result.content)
                         elif plagiarism_clicked:
+                            from integrity_agent import check_integrity
+
                             result = check_integrity(
                                 draft_for_tools,
                                 level=mentor_level,
