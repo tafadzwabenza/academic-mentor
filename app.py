@@ -153,11 +153,8 @@ def should_run_triage(project_state: Dict[str, Any], explicit_trigger: bool = Fa
     if not messages:
         return True
 
-    user_messages = [message for message in messages if message["role"] == "user"]
-    if len(user_messages) == 1 and messages[-1]["role"] == "user":
-        return True
-
-    return False
+    # Keep triaging on every user turn until a stage is decided — not just the first message.
+    return messages[-1]["role"] == "user"
 
 
 def default_project_state() -> Dict[str, Any]:
@@ -209,7 +206,7 @@ def mark_topic_established(project_state: Dict[str, Any], stage: Optional[str]) 
 
 
 def log_error(context: str, error: Exception) -> None:
-    pass
+    st.error(f"🔥 AGENT ERROR ({context}): {error}")
 
 
 def service_error_message() -> str:
@@ -479,11 +476,16 @@ def run_triage(prompt: str, project_state: Dict[str, Any]):
     if student_level in VALID_STUDENT_LEVELS:
         st.session_state.student_level = student_level
         persist_user_profile()
-        stage = diagnosis.current_stage.strip()
-        if stage and stage not in {"Pending", "Unknown", "Error"}:
-            project_state["current_stage"] = stage
-            st.session_state.current_stage = stage
-            mark_topic_established(project_state, stage)
+
+    stage = diagnosis.current_stage.strip()
+    if (
+        (student_level in VALID_STUDENT_LEVELS or is_onboarded())
+        and stage
+        and stage not in {"Pending", "Unknown", "Error"}
+    ):
+        project_state["current_stage"] = stage
+        st.session_state.current_stage = stage
+        mark_topic_established(project_state, stage)
 
     apply_literature_routing_override(prompt, project_state)
     st.session_state.current_stage = project_state.get("current_stage")
@@ -561,14 +563,30 @@ def generate_assistant_response(
 
         stage = project_state.get("current_stage")
         if stage is None:
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": (
-                        "Tell me a bit more about your research topic and where you're stuck."
-                    ),
-                }
+            diagnosis = run_triage(triage_input, project_state)
+            stage = project_state.get("current_stage")
+
+            if not is_onboarded() or not stage_is_decided(stage):
+                messages.append({"role": "assistant", "content": diagnosis.initial_response})
+                return
+
+            agent_output, mermaid_code, agent_succeeded = route_to_agent(
+                stage,
+                messages,
+                search_depth,
+                year_range,
+                referencing_style,
+                level=st.session_state.student_level,
             )
+            if not agent_succeeded:
+                messages.append({"role": "assistant", "content": agent_output})
+                return
+
+            full_response = f"{diagnosis.initial_response}\n\n{agent_output}"
+            assistant_message: Dict[str, Any] = {"role": "assistant", "content": full_response}
+            if mermaid_code:
+                assistant_message["mermaid"] = mermaid_code
+            messages.append(assistant_message)
             return
 
         agent_output, mermaid_code, agent_succeeded = route_to_agent(
@@ -579,6 +597,10 @@ def generate_assistant_response(
             referencing_style,
             level=st.session_state.student_level,
         )
+        if not agent_succeeded:
+            messages.append({"role": "assistant", "content": agent_output})
+            return
+
         assistant_message = {"role": "assistant", "content": agent_output}
         if mermaid_code:
             assistant_message["mermaid"] = mermaid_code
