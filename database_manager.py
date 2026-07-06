@@ -8,18 +8,8 @@ import psycopg2.extras
 import streamlit as st
 
 
-@st.cache_resource
-def init_connection():
-    return psycopg2.connect(st.secrets["SUPABASE_URL"])
-
-
 def _connect():
-    conn = init_connection()
-    # Check if the connection dropped/closed, and reconnect if necessary
-    if conn.closed:
-        st.cache_resource.clear()
-        conn = init_connection()
-    return conn
+    return psycopg2.connect(st.secrets["SUPABASE_URL"])
 
 
 def _cursor(conn):
